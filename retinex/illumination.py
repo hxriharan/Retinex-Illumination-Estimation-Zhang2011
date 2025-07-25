@@ -21,7 +21,7 @@ def estimate_illumination(img_log, method='gaussian', ksize=15, sigma=30):  # (k
             # Convert single channel to 8U before bilateral
             channel = img_log[:, :, c]
             norm = cv2.normalize(channel, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            filtered = cv2.bilateralFilter(norm, d=7, sigmaColor=25, sigmaSpace=5)       # (d, sigmaColor, sigmaSpace) = (7, 25, 5), (15, 50, 10), (31, 100, 20) / original -> norm, d=9, sigmaColor=75, sigmaSpace=75
+            filtered = cv2.bilateralFilter(norm, d=15, sigmaColor=50, sigmaSpace=10)       # (d, sigmaColor, sigmaSpace) = (7, 25, 5), (15, 50, 10), (31, 100, 20) / original -> norm, d=9, sigmaColor=75, sigmaSpace=75
             illum[:, :, c] = cv2.normalize(filtered.astype(np.float32), None, channel.min(), channel.max(), cv2.NORM_MINMAX)
         else:
             raise ValueError(f"Unsupported method: {method}")
@@ -68,8 +68,8 @@ def main():
         plt.show()
 
         # Save outputs
-        save_image(reflectance, f'Files/reflectance_7_25_5{method}.png')
-        save_image(illum_rgb, f'Files/illumination_7_25_5{method}.png')
+        save_image(reflectance, f'Files/reflectance_15_50_10{method}.png')
+        save_image(illum_rgb, f'Files/illumination_15_50_10{method}.png')
 
 if __name__ == "__main__":
     main()

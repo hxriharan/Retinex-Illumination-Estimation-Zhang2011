@@ -68,8 +68,8 @@ def main():
         plt.show()
 
         # Save outputs
-        save_image(reflectance, f'Files/reflectance_{method}.png')
-        save_image(illum_rgb, f'Files/illumination_{method}.png')
+        save_image(reflectance, f'Files/reflectance_15_30{method}.png')
+        save_image(illum_rgb, f'Files/illumination_15_30{method}.png')
 
 if __name__ == "__main__":
     main()

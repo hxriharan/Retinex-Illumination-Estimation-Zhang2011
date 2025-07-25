@@ -12,7 +12,7 @@ def log_to_rgb(log_img):
     img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
     return img
 
-def estimate_illumination(img_log, method='gaussian', ksize=15, sigma=30):
+def estimate_illumination(img_log, method='gaussian', ksize=7, sigma=2):  # (ksize=7, sigma=2), (ksize=15, sigma=5), (ksize=31, sigma=15), (ksize=51, sigma=25) / original -> (15, 30)
     illum = np.zeros_like(img_log)
     for c in range(3):
         if method == 'gaussian':
@@ -21,7 +21,7 @@ def estimate_illumination(img_log, method='gaussian', ksize=15, sigma=30):
             # Convert single channel to 8U before bilateral
             channel = img_log[:, :, c]
             norm = cv2.normalize(channel, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            filtered = cv2.bilateralFilter(norm, d=9, sigmaColor=75, sigmaSpace=75)
+            filtered = cv2.bilateralFilter(norm, d=9, sigmaColor=75, sigmaSpace=75)       # (d, sigmaColor, sigmaSpace) = (7, 25, 5), (15, 50, 10), (31, 100, 20)
             illum[:, :, c] = cv2.normalize(filtered.astype(np.float32), None, channel.min(), channel.max(), cv2.NORM_MINMAX)
         else:
             raise ValueError(f"Unsupported method: {method}")
@@ -68,8 +68,8 @@ def main():
         plt.show()
 
         # Save outputs
-        save_image(reflectance, f'Files/reflectance_15_30{method}.png')
-        save_image(illum_rgb, f'Files/illumination_15_30{method}.png')
+        save_image(reflectance, f'Files/reflectance_7_2{method}.png')
+        save_image(illum_rgb, f'Files/illumination_7_2{method}.png')
 
 if __name__ == "__main__":
     main()

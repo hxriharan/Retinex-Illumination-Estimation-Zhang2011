@@ -12,7 +12,7 @@ def log_to_rgb(log_img):
     img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
     return img
 
-def estimate_illumination(img_log, method='gaussian', ksize=15, sigma=5):  # (ksize=7, sigma=2), (ksize=15, sigma=5), (ksize=31, sigma=15), (ksize=51, sigma=25) / original -> (15, 30)
+def estimate_illumination(img_log, method='gaussian', ksize=51, sigma=25):  # (ksize=7, sigma=2), (ksize=15, sigma=5), (ksize=31, sigma=15), (ksize=51, sigma=25) / original -> (15, 30)
     illum = np.zeros_like(img_log)
     for c in range(3):
         if method == 'gaussian':
@@ -68,8 +68,8 @@ def main():
         plt.show()
 
         # Save outputs
-        save_image(reflectance, f'Files/reflectance_15_5{method}.png')
-        save_image(illum_rgb, f'Files/illumination_15_5{method}.png')
+        save_image(reflectance, f'Files/reflectance_51_25{method}.png')
+        save_image(illum_rgb, f'Files/illumination_51_25{method}.png')
 
 if __name__ == "__main__":
     main()

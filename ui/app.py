@@ -46,7 +46,7 @@ def process_image(image, option, method, ksize, sigma, d, sigColor, sigSpace):
     elif option == "Illumination":
         return show_illumination(image, method, ksize, sigma, d, sigColor, sigSpace)
     else:
-        return image  # fallback
+        return image  # fallback 
 
 # Gradio UI
 def main_ui():

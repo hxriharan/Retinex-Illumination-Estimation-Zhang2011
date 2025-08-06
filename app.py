@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 import os
 from improved_retinex import run_irr_pipeline
-from ssr_msr import run_ssr, run_msr
+from ssr_msr import single_scale_retinex, multi_scale_retinex
 from utils import load_image, save_image, normalize_image
 
 def process_image_all_algorithms(image):
@@ -25,19 +25,14 @@ def process_image_all_algorithms(image):
     
     try:
         # Run SSR (Single Scale Retinex)
-        ssr_result = run_ssr(
-            img_array, 
-            sigma=80,
-            normalize_method='minmax'
-        )
+        ssr_result = single_scale_retinex(img_array, sigma=80)
+        # Convert from [0,1] to [0,255] for display
+        ssr_result = (ssr_result * 255).astype(np.uint8)
         
         # Run MSR (Multi Scale Retinex)
-        msr_result = run_msr(
-            img_array,
-            sigmas=[15, 80, 250],
-            weights=[1/3, 1/3, 1/3],
-            normalize_method='minmax'
-        )
+        msr_result = multi_scale_retinex(img_array, sigmas=[15, 80, 250])
+        # Convert from [0,1] to [0,255] for display
+        msr_result = (msr_result * 255).astype(np.uint8)
         
         # Run IRR (Improved Recursive Retinex) with fixed threshold
         irr_results = run_irr_pipeline(

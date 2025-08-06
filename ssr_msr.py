@@ -1,144 +1,56 @@
-import cv2
 import numpy as np
-from utils import normalize_image
+import cv2
 
-def rgb_to_log(img, epsilon=1e-6):
-    """Convert RGB image to log domain."""
-    img = img.astype(np.float32) / 255.0
-    return np.log(img + epsilon)
-
-def log_to_rgb(log_img):
-    """Convert log domain image back to RGB."""
-    img = np.exp(log_img)
-    img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-    return img
-
-def single_scale_retinex(img, sigma=80):
+def single_scale_retinex(img, sigma=30):
     """
-    Single Scale Retinex algorithm.
+    Apply Single Scale Retinex (SSR) to an RGB image.
     
-    Args:
-        img: Input RGB image
-        sigma: Gaussian blur sigma
+    Parameters:
+        img (np.ndarray): Input image (uint8, RGB).
+        sigma (float): Standard deviation for Gaussian blur.
     
     Returns:
-        Enhanced image in log domain
+        np.ndarray: SSR-enhanced image (float32, normalized 0–1).
     """
-    # Convert to log domain
-    log_img = rgb_to_log(img)
-    
-    # Apply Gaussian blur to estimate illumination
-    illum = np.zeros_like(log_img)
-    for c in range(3):
-        illum[:, :, c] = cv2.GaussianBlur(log_img[:, :, c], (0, 0), sigma)
-    
-    # Recover reflectance
-    reflectance = log_img - illum
-    
-    return reflectance
+    img = img.astype(np.float32) + 1.0  # Avoid log(0)
 
-def multi_scale_retinex(img, sigmas=[15, 80, 250], weights=None):
-    """
-    Multi Scale Retinex algorithm.
+    # Apply Gaussian blur
+    blurred = cv2.GaussianBlur(img, (0, 0), sigma)
+
+    # SSR formula
+    retinex = np.log(img) - np.log(blurred)
     
-    Args:
-        img: Input RGB image
-        sigmas: List of Gaussian blur sigmas for different scales
-        weights: Weights for each scale (default: equal weights)
+    # Normalize to [0, 1]
+    retinex = normalize_01(retinex)
+    return retinex
+
+
+def multi_scale_retinex(img, sigmas=[15, 80, 250]):
+    """
+    Apply Multi Scale Retinex (MSR) to an RGB image.
+    
+    Parameters:
+        img (np.ndarray): Input image (uint8, RGB).
+        sigmas (list): List of Gaussian sigmas to use.
     
     Returns:
-        Enhanced image in log domain
+        np.ndarray: MSR-enhanced image (float32, normalized 0–1).
     """
-    if weights is None:
-        weights = [1.0 / len(sigmas)] * len(sigmas)
-    
-    # Convert to log domain
-    log_img = rgb_to_log(img)
-    
-    # Apply SSR for each scale
-    reflectance_sum = np.zeros_like(log_img)
-    
-    for sigma, weight in zip(sigmas, weights):
-        # Apply Gaussian blur
-        illum = np.zeros_like(log_img)
-        for c in range(3):
-            illum[:, :, c] = cv2.GaussianBlur(log_img[:, :, c], (0, 0), sigma)
-        
-        # Recover reflectance for this scale
-        reflectance = log_img - illum
-        
-        # Weighted sum
-        reflectance_sum += weight * reflectance
-    
-    return reflectance_sum
+    img = img.astype(np.float32) + 1.0  # Avoid log(0)
 
-def run_ssr(img, sigma=80, normalize_method='minmax'):
-    """
-    Run Single Scale Retinex with normalization.
+    msr_result = np.zeros_like(img, dtype=np.float32)
+    for sigma in sigmas:
+        blurred = cv2.GaussianBlur(img, (0, 0), sigma)
+        retinex = np.log(img) - np.log(blurred)
+        msr_result += retinex
     
-    Args:
-        img: Input RGB image
-        sigma: Gaussian blur sigma
-        normalize_method: Normalization method
-    
-    Returns:
-        Enhanced image
-    """
-    # Apply SSR
-    reflectance = single_scale_retinex(img, sigma)
-    
-    # Convert back to RGB
-    enhanced = log_to_rgb(reflectance)
-    
-    # Normalize
-    enhanced = normalize_image(enhanced, method=normalize_method)
-    
-    return enhanced
+    msr_result /= len(sigmas)
+    msr_result = normalize_01(msr_result)
+    return msr_result
 
-def run_msr(img, sigmas=[15, 80, 250], weights=None, normalize_method='minmax'):
-    """
-    Run Multi Scale Retinex with normalization.
-    
-    Args:
-        img: Input RGB image
-        sigmas: List of Gaussian blur sigmas
-        weights: Weights for each scale
-        normalize_method: Normalization method
-    
-    Returns:
-        Enhanced image
-    """
-    # Apply MSR
-    reflectance = multi_scale_retinex(img, sigmas, weights)
-    
-    # Convert back to RGB
-    enhanced = log_to_rgb(reflectance)
-    
-    # Normalize
-    enhanced = normalize_image(enhanced, method=normalize_method)
-    
-    return enhanced
 
-def compare_ssr_msr(img, sigma_ssr=80, sigmas_msr=[15, 80, 250]):
-    """
-    Compare SSR and MSR results.
-    
-    Args:
-        img: Input RGB image
-        sigma_ssr: Sigma for SSR
-        sigmas_msr: Sigmas for MSR
-    
-    Returns:
-        Dictionary with original, SSR, and MSR results
-    """
-    # Run SSR
-    enhanced_ssr = run_ssr(img, sigma_ssr)
-    
-    # Run MSR
-    enhanced_msr = run_msr(img, sigmas_msr)
-    
-    return {
-        'original': img,
-        'ssr': enhanced_ssr,
-        'msr': enhanced_msr
-    } 
+def normalize_01(img):
+    """Normalize image to [0, 1] per channel."""
+    img_min = np.min(img, axis=(0, 1), keepdims=True)
+    img_max = np.max(img, axis=(0, 1), keepdims=True)
+    return (img - img_min) / (img_max - img_min + 1e-6)

@@ -1,28 +1,15 @@
-venv-retinex/
-venv/
-venv-*/
-**/__pycache__/**
+# Python cache files
+__pycache__/
 *.pyc
-.DS_Store
-Files/**
-data/**
-datasets/**
-outputs/**
-logs/**
-checkpoints/**
-.vscode/**
-.idea/**
-# .gitignore  (also copy the same to .hfignore)
-venv*/
-.venv*/
-**/__pycache__/**
-*.pyc
+
+# OS files
 .DS_Store
 
-# large/binary stuff
-Files/**
-*.so
-*.dylib
-*.npz
-*.npy
-*.ttf
+# Gradio cache
+.gradio/
+
+# Image and document files
+*.png
+*.jpg
+*.jpeg
+*.pdf

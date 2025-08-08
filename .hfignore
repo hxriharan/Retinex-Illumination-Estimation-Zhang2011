@@ -12,3 +12,17 @@ logs/**
 checkpoints/**
 .vscode/**
 .idea/**
+# .gitignore  (also copy the same to .hfignore)
+venv*/
+.venv*/
+**/__pycache__/**
+*.pyc
+.DS_Store
+
+# large/binary stuff
+Files/**
+*.so
+*.dylib
+*.npz
+*.npy
+*.ttf

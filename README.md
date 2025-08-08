@@ -63,3 +63,10 @@ This will launch a Gradio interface where you can:
 
 This project is open source. Please check the license file for details.
 
+## Citation
+
+This repository contains an independent implementation inspired by the paper:
+
+> Zhang, et al. "Retinex-based Image Enhancement for Illumination and Reflectance Estimation." International Conference on Wavelet Analysis and Pattern Recognition (ICWAPR), 2011.
+
+If you use this code in academic work, please cite the original paper.

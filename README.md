@@ -1,3 +1,9 @@
+---
+title: retinex
+app_file: app.py
+sdk: gradio
+sdk_version: 5.39.0
+---
 # Recursive Retinex Implementation (Zhang 2011)
 
 This repository implements various Retinex-based image enhancement algorithms, including Single Scale Retinex (SSR), Multi Scale Retinex (MSR), and Improved Recursive Retinex (IRR) based on Zhang 2011.

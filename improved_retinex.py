@@ -1,234 +1,154 @@
+# irr.py
 import cv2
 import numpy as np
 
-
+# ---------- basic helpers ----------
 def rgb_to_log(img, epsilon=1e-6):
+    """Convert RGB uint8 image to log-domain float32."""
     img = img.astype(np.float32) / 255.0
     return np.log(img + epsilon)
 
-
 def log_to_rgb(log_img):
+    """Convert log-domain image back to uint8 RGB."""
     img = np.exp(log_img)
     img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
     return img
 
-
 def normalize_image(img, vmin=None, vmax=None):
+    """Min–max normalize to uint8 for quick viewing."""
     img = img.astype(np.float32)
-    if vmin is None:
-        vmin = img.min()
-    if vmax is None:
-        vmax = img.max()
-    if vmax - vmin < 1e-6:  # Prevent division by zero
+    vmin = float(img.min()) if vmin is None else vmin
+    vmax = float(img.max()) if vmax is None else vmax
+    if vmax - vmin < 1e-8:
         return np.full_like(img, 128, dtype=np.uint8)
-    norm = (img - vmin) / (vmax - vmin)
-    return (norm * 255).astype(np.uint8)
+    out = (img - vmin) / (vmax - vmin + 1e-12)
+    return (out * 255.0).astype(np.uint8)
 
+# ---------- improved recursive retinex ----------
+def _scan_order(H, W, dy, dx):
+    """Ensure predecessor (y-dy, x-dx) is visited first."""
+    ys = range(H) if dy >= 0 else range(H - 1, -1, -1)
+    xs = range(W) if dx >= 0 else range(W - 1, -1, -1)
+    return ys, xs
 
-def adaptive_recursive_filter(img_channel, direction, alpha=0.05):
+def directional_recursive_filter(img_channel, direction, alpha=0.1, threshold=0.2):
     """
-    Simplified recursive filter that preserves edges better
+    Edge-aware one-pass recursion along a direction (log-domain).
+    img_channel: (H,W) float32 log intensity
+    direction: (dy, dx) in {-1,0,1}^2 \ {(0,0)}
+    alpha: smoothing factor
+    threshold: stop when |I(p)-I(prev)| >= threshold (log units)
     """
     H, W = img_channel.shape
-    output = img_channel.copy().astype(np.float32)
     dy, dx = direction
-    
-    # Determine processing order
-    if dy >= 0:
-        y_range = range(H)
-    else:
-        y_range = range(H-1, -1, -1)
-        
-    if dx >= 0:
-        x_range = range(W)
-    else:
-        x_range = range(W-1, -1, -1)
-    
-    for y in y_range:
-        for x in x_range:
+    L = np.zeros_like(img_channel, dtype=np.float32)
+
+    ys, xs = _scan_order(H, W, dy, dx)
+    for y in ys:
+        for x in xs:
             py, px = y - dy, x - dx
-            
             if 0 <= py < H and 0 <= px < W:
-                # Adaptive threshold based on local statistics
-                local_std = np.std(img_channel[max(0, y-2):min(H, y+3), 
-                                             max(0, x-2):min(W, x+3)])
-                threshold = max(0.01, local_std * 0.1)
-                
-                diff = abs(img_channel[y, x] - output[py, px])
-                
-                if diff < threshold:
-                    # Use smaller alpha for better edge preservation
-                    local_alpha = alpha * (1.0 - diff / threshold)
-                    output[y, x] = (1 - local_alpha) * output[py, px] + local_alpha * img_channel[y, x]
-    
-    return output
+                if abs(img_channel[y, x] - img_channel[py, px]) < threshold:
+                    L[y, x] = (1 - alpha) * L[py, px] + alpha * img_channel[y, x]
+                else:
+                    L[y, x] = img_channel[y, x]  # restart at edges
+            else:
+                L[y, x] = img_channel[y, x]      # seed boundary
+    return L
 
-
-def improved_recursive_retinex(img_log, alpha=0.03, max_iterations=3):
+def improved_recursive_retinex(img_log, alpha=0.05, threshold=0.4,
+                               use_auto_threshold=False, post_smooth=True):
     """
-    Completely rewritten IRR algorithm with better edge handling
+    8-direction symmetric recursive illumination (log-domain).
+    - use_auto_threshold: compute channel-wise threshold from gradient stats
+    - post_smooth: tiny Gaussian blur to hide directional seams
     """
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
+                  (-1, -1), (-1, 1), (1, -1), (1, 1)]
     H, W, C = img_log.shape
-    
-    # Initialize illumination as the image itself
-    illum = img_log.copy()
-    
-    directions = [(0, 1), 
-                (1, 0), 
-                (0, -1), 
-                (-1, 0),  # 4-connected
-                (1, 1),
-                (1, -1), 
-                (-1, 1), 
-                (-1, -1)]  # 8-connected
-    
-    # Apply multiple iterations with decreasing effect
-    for iteration in range(max_iterations):
-        current_alpha = alpha * (0.5 ** iteration)  # Decreasing alpha
-        temp_illum = np.zeros_like(illum)
-        
-        for c in range(C):
-            channel_sum = np.zeros((H, W), dtype=np.float32)
-            
-            for direction in directions:
-                filtered = adaptive_recursive_filter(illum[:, :, c], direction, current_alpha)
-                channel_sum += filtered
-                
-            temp_illum[:, :, c] = channel_sum / len(directions)
-        
-        # Blend with previous iteration to prevent over-smoothing
-        blend_factor = 0.7
-        illum = blend_factor * temp_illum + (1 - blend_factor) * illum
-    
+    illum = np.zeros((H, W, C), dtype=np.float32)
+
+    def _auto_threshold_from_grad(ch, k=4.0):
+        gy = np.diff(ch, axis=0, prepend=ch[:1])
+        gx = np.diff(ch, axis=1, prepend=ch[:, :1])
+        g = np.abs(gx) + np.abs(gy)
+        med = np.median(g)
+        mad = np.median(np.abs(g - med)) + 1e-6
+        return k * (med + 1.4826 * mad)
+
+    for c in range(C):
+        ch = img_log[:, :, c].astype(np.float32)
+        th = _auto_threshold_from_grad(ch) if use_auto_threshold else threshold
+
+        acc = np.zeros((H, W), dtype=np.float32)
+        for dy, dx in directions:
+            fwd = directional_recursive_filter(ch, (dy, dx), alpha=alpha, threshold=th)
+            bwd = directional_recursive_filter(ch, (-dy, -dx), alpha=alpha, threshold=th)
+            acc += 0.5 * (fwd + bwd)
+
+        Lc = acc / float(len(directions))
+        if post_smooth:
+            Lc = cv2.GaussianBlur(Lc, (0, 0), 1.0)  # σ≈1
+        illum[:, :, c] = Lc
     return illum
 
 
-def estimate_illumination(img_log, method='gaussian', ksize=15, sigma=30):
-    """Standard illumination estimation methods"""
-    illum = np.zeros_like(img_log)
-    for c in range(3):
-        if method == 'gaussian':
-            illum[:, :, c] = cv2.GaussianBlur(img_log[:, :, c], (ksize, ksize), sigma)
-        elif method == 'bilateral':
-            channel = img_log[:, :, c]
-            # Convert to uint8 for bilateral filter
-            norm = cv2.normalize(channel, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            filtered = cv2.bilateralFilter(norm, d=31, sigmaColor=100, sigmaSpace=20)
-            # Convert back to original range
-            illum[:, :, c] = cv2.normalize(filtered.astype(np.float32), None, 
-                                         channel.min(), channel.max(), cv2.NORM_MINMAX)
-        else:
-            raise ValueError(f"Unsupported method: {method}")
-    return illum
-
-
+# ---------- reflectance + simple enhancement ----------
 def recover_reflectance(log_img, log_illum):
-    """Recover reflectance with clamping to prevent artifacts"""
-    reflectance = log_img - log_illum
-    # Clamp extreme values to prevent artifacts
-    reflectance = np.clip(reflectance, -10, 10)
-    return reflectance
+    """Log reflectance (clamped to avoid numeric junk)."""
+    log_R = log_img - log_illum
+    return np.clip(log_R, -10.0, 10.0)
 
+def enhance_reflectance_u8(R_u8, method='normalize'):
+    """
+    Simple visualization options:
+      - 'normalize'    : min–max per-image
+      - 'adaptive_hist': CLAHE on Y channel
+      - 'gamma'        : auto gamma based on mean
+    """
+    if method == 'normalize':
+        return normalize_image(R_u8)
 
-def enhanced_contrast_adjustment(img, method='adaptive_hist'):
-    """
-    Better contrast enhancement for high dynamic range images
-    """
     if method == 'adaptive_hist':
-        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        if len(img.shape) == 3:
-            # Convert to YUV and apply CLAHE only to Y channel
-            yuv = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            yuv[:,:,0] = clahe.apply(yuv[:,:,0])
-            enhanced = cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB)
-        else:
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(img)
-        return enhanced
-    elif method == 'normalize':
-        return normalize_image(img)
-    elif method == 'gamma':
-        # Adaptive gamma correction
-        mean_val = np.mean(img) / 255.0
-        gamma = -0.3 / np.log10(mean_val + 1e-6)
-        gamma = np.clip(gamma, 0.5, 2.5)
-        table = np.array([((i / 255.0) ** (1/gamma)) * 255 for i in range(256)]).astype(np.uint8)
-        return cv2.LUT(img, table)
-    else:
-        return normalize_image(img)
+        yuv = cv2.cvtColor(R_u8, cv2.COLOR_RGB2YUV)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        yuv[:, :, 0] = clahe.apply(yuv[:, :, 0])
+        return cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB)
 
+    if method == 'gamma':
+        m = max(1e-6, np.mean(R_u8) / 255.0)
+        gamma = float(np.clip(-0.3 / np.log10(m + 1e-6), 0.5, 2.5))
+        table = np.array([((i / 255.0) ** (1.0 / gamma)) * 255.0 for i in range(256)]).astype(np.uint8)
+        return cv2.LUT(R_u8, table)
 
-def run_fixed_irr_pipeline(img, illum_method='gaussian', illum_ksize=15, illum_sigma=30,
-                          use_recursive=False, alpha=0.03, max_iterations=3,
-                          enhance_method='adaptive_hist'):
+    return normalize_image(R_u8)
+
+# ---------- IRR pipeline (recursive only) ----------
+def run_irr_pipeline(img_u8, alpha=0.05, threshold=0.4, enhance_method='normalize',
+                     use_auto_threshold=False, post_smooth=True):
     """
-    Completely rewritten IRR pipeline with proper edge preservation
+    Full IRR with consistent defaults and optional auto-threshold/post-smooth.
     """
-    # Convert to log domain
-    log_image = rgb_to_log(img)
+    log_img = rgb_to_log(img_u8)
+    log_L = improved_recursive_retinex(log_img, alpha=alpha, threshold=threshold,
+                                       use_auto_threshold=use_auto_threshold,
+                                       post_smooth=post_smooth)
+    log_R = recover_reflectance(log_img, log_L)
 
-    # Estimate illumination using the chosen method
-    if use_recursive:
-        log_illum = improved_recursive_retinex(log_image, alpha=alpha, max_iterations=max_iterations)
-    else:
-        log_illum = estimate_illumination(log_image, method=illum_method, 
-                                        ksize=illum_ksize, sigma=illum_sigma)
+    R_u8 = log_to_rgb(log_R)
+    L_u8 = log_to_rgb(log_L)
+    R_vis = enhance_reflectance_u8(R_u8, method=enhance_method)
 
-    # Recover reflectance
-    log_reflect = recover_reflectance(log_image, log_illum)
-    
-    # Convert back to RGB domain
-    reflectance = log_to_rgb(log_reflect)
-    illum_rgb = log_to_rgb(log_illum)
-
-    # Enhanced contrast adjustment
-    enhanced = enhanced_contrast_adjustment(reflectance, method=enhance_method)
-
-    return {
-        'original': img,
-        'illumination': illum_rgb,
-        'reflectance': reflectance,
-        'enhanced': enhanced
-    }
+    return {'original': img_u8, 'illumination': L_u8, 'reflectance': R_u8, 'enhanced': R_vis}
 
 
-def create_test_image():
-    """Create a test image similar to your input"""
+# ---------- quick self-test ----------
+if __name__ == "__main__":
+    # synthetic: black bg + white square
     img = np.zeros((300, 300, 3), dtype=np.uint8)
-    img[125:175, 125:175] = 255  # White square in center
-    return img
+    img[125:175, 125:175] = 255
 
-
-def test_all_methods():
-    """Test function to compare all three methods"""
-    img = create_test_image()
-    
-    print("Testing SSR...")
-    log_img = rgb_to_log(img)
-    log_illum_ssr = estimate_illumination(log_img, method='gaussian', ksize=15, sigma=80)
-    ssr_result = normalize_image(log_to_rgb(recover_reflectance(log_img, log_illum_ssr)))
-    
-    print("Testing MSR...")
-    scales = [15, 80, 250]
-    msr_result = np.zeros_like(log_img)
-    for sigma in scales:
-        log_illum = estimate_illumination(log_img, method='gaussian', ksize=15, sigma=sigma)
-        msr_result += recover_reflectance(log_img, log_illum)
-    msr_result /= len(scales)
-    msr_result = normalize_image(log_to_rgb(msr_result))
-    
-    print("Testing Fixed IRR...")
-    irr_results = run_fixed_irr_pipeline(img, use_recursive=True, alpha=0.03, 
-                                       max_iterations=2, enhance_method='normalize')
-    
-    return {
-        'original': img,
-        'ssr': ssr_result,
-        'msr': msr_result,
-        'irr': irr_results['enhanced']
-    }
-
-# Usage example:
-# results = test_all_methods()
-# The IRR result should now preserve contrast instead of being uniform grey
+    out = run_irr_pipeline(img, alpha=0.05, threshold=0.4, enhance_method='normalize')
+    cv2.imwrite("irr_illum.png", cv2.cvtColor(out['illumination'], cv2.COLOR_RGB2BGR))
+    cv2.imwrite("irr_reflect.png", cv2.cvtColor(out['reflectance'], cv2.COLOR_RGB2BGR))
+    cv2.imwrite("irr_enhanced.png", cv2.cvtColor(out['enhanced'], cv2.COLOR_RGB2BGR))
